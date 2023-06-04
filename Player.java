@@ -253,11 +253,17 @@ class Player {
             Stream.concat(chain.stream(), segmentCandidate.stream()).filter(i -> cells[i].currentResource>0).distinct().forEach(i->{
                 if(cells[i].type == 1) {
                     // it's an EGG
-                    score[0]++;
-                } else if (cells[i].type ==2) {
+                    if(ants<=opp.ants*1.2)  {
+                        score[0]+=2;
+                    } else if (ants<=opp.ants*1.2){
+                        score[0]++;
+                    } else {
+                        score[1]*=2; // penalize as empty cells
+                    }
+                } else if (cells[i].type == 2) {
                     // it's a crystal
                     score[0]++;
-                    score[0]+= cells[i].currentResource/ crystalsLeft; // prioritize most valueable resource
+                    score[0]+= cells[i].currentResource / crystalsLeft; // prioritize most valueable resource
                 } else {
                     score[1]*=2; // penalize empty cells
                 }
