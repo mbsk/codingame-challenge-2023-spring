@@ -285,6 +285,17 @@ class Player {
                 initialCrystalCount+=count;
             }
         }
+
+        public int getBeaconWeight(int cellIdx) {
+            Cell cell = cells[cellIdx];
+            if(cell.myAnts > 0 && cell.oppAnts>=cell.myAnts) {
+                Double weight = Math.ceil(cell.oppAnts/cell.myAnts);
+                return weight.intValue();
+            } else {
+                return 1;
+            }
+
+        }
     }
 
     public static void main(String[] args) {
@@ -342,7 +353,7 @@ class Player {
         while (true) {
             strategy.score = in.nextInt();
             opp.score = in.nextInt();
-            
+
             strategy.resetCounters();
             opp.resetCounters();
             System.err.println(System.currentTimeMillis()-chronoTop+" RESET COUNTERS DONE");
@@ -370,7 +381,8 @@ class Player {
             beacons.addAll(strategy.chain);
             String cmd="";
             for (Integer cellIdx : beacons) {
-                cmd+="BEACON "+cellIdx+" 1;";
+                int weight = strategy.getBeaconWeight(cellIdx);
+                cmd+="BEACON "+cellIdx+" "+weight+";";
             }
             System.err.println(System.currentTimeMillis()-chronoTop+" WRITING BEACON");
             System.out.println(cmd);
