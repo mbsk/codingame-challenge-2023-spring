@@ -33,6 +33,7 @@ class Player {
     /** Holds opponent's data */
     static class Opponent {
         int ants=0;        // counter of opponent ants
+        int score=0;
         final Set<Integer> bases = new HashSet<>();     // list of opponent bases indexed by cell's idx
         final Set<Integer> occupied = new HashSet<>();    // list of opponent occupied cells indexed by cell's idx
 
@@ -173,6 +174,7 @@ class Player {
         final Set<Integer> harvestingResources = new HashSet<>(); // resources currently harvested by the chain
 
         int ants=0;               // counter of own ants
+        int score=0;
         final Set<Integer> occupied = new HashSet<>();    // list of opponent occupied cells indexed by cell's idx
         int eggsLeft=0;             // counter of remaining eggsCount
         int crystalsLeft =0;        // counter of remaining resources
@@ -338,6 +340,9 @@ class Player {
         Set<Integer> beacons = new HashSet<>(); // holds a list of cells where to put beacons (recalculated every turn)
         // game loop
         while (true) {
+            strategy.score = in.nextInt();
+            opp.score = in.nextInt();
+            
             strategy.resetCounters();
             opp.resetCounters();
             System.err.println(System.currentTimeMillis()-chronoTop+" RESET COUNTERS DONE");
@@ -377,4 +382,3 @@ class Player {
         }
     }
 }
-
