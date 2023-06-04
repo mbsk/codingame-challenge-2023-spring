@@ -3,27 +3,24 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-/**
- * Auto-generated code below aims at helping you parse
- * the standard input according to the problem statement.
- **/
 class Player {
 
-    static final int BRANCH_COUNT = 5;
-    static double PI3rd = Math.PI/3;
+    final static double PI3rd = Math.PI/3;
 
-    static int myAnts=0;
-    static int oppAnts=0;
-    static Set<Graph> myBases=new HashSet<>();
-    static Set<Integer> oppBaseIndex=new HashSet<>();
+    static int myAnts=0;    // counter of own ants
+    static int oppAnts=0;   // counter of opponent ants
+    static int eggsCount=0; // counter of initial eggsCount
 
-    static Cell[] cells;
-    static int numberOfCells;
-    static Set<Integer> resources = new HashSet<>();
-    static Set<Integer> eggs = new HashSet<>();
-    static Map<Integer, Map<Integer, Integer[]>> cache;
-    static Set<Integer> beacons = new HashSet<>();
+    static Set<Graph> myBases=new HashSet<>();          // list of own bases
+    static Set<Integer> oppBaseIndex=new HashSet<>();   // list of opponent bases
 
+    static Cell[] cells;        // board of the game, an array of cells indexed by cell's idx
+    static int numberOfCells;   // board's cells count
+    static Set<Integer> resources = new HashSet<>();    // all resource (crystal and eggs) of the game indexed by cell's idx
+
+    static Map<Integer, Map<Integer, Integer[]>> shortestPathCache; // holds the cache of shorter path to each resource (to, from)
+
+    /** Represents a cell of the board */
     static class Cell {
         int type;
         int initialResource;
@@ -36,24 +33,25 @@ class Player {
         int oppAnts;
     }
 
+    /** Represents a tree of beacons from a base */
     static class Graph {
-        final int rootIdx;
-        final Set<Integer> tree = new HashSet<>(); // contains beacon positions
-        final List<GraphNode> nodes;
-        int segmentsCount = 0;
-        long resourcesCount = 0;
+        final int rootIdx; // cell's idx of the base
+        final Set<Integer> tree = new HashSet<>(); // an array of beacon positions (cell's idx)
+        final List<GraphNode> nodes; // graph of beacon's tree (indexed by cell's idx)
+        long resourcesCount = 0;    // count of resources covered by the tree
 
-		public Graph(int baseIdx, int size) {
+        public Graph(int baseIdx, int size) {
             this.rootIdx = baseIdx;
-			this.nodes = Stream.generate(() -> new GraphNode()).limit(size).collect(Collectors.toCollection(ArrayList::new));
+            this.nodes = Stream.generate(() -> new GraphNode()).limit(size).collect(Collectors.toCollection(ArrayList::new));
             IntStream.range(0, size).forEach(i->this.nodes.get(i).idx=i);
             GraphNode rootNode = nodes.get(rootIdx);
             rootNode.distanceToBase = 0;
             rootNode.segment = new ArrayList<>();
             rootNode.segment.add(baseIdx);
             tree.add(baseIdx);
-		}
+        }
 
+        // called on each turn to update the tree
         void updateTree() {
             cleanTree();
             //bestTree(BRANCH_COUNT-segmentsCount);
@@ -62,11 +60,12 @@ class Player {
         }
 
         void cleanTree() {
+            // STRATEGY 1 : clean the tree on each turn
             tree.clear();
             tree.add(rootIdx);
 
- 
-            // cut branches ending with an empty ressource
+            // STRATEGY 2 : only cut "dead" branches (= the one who leads to an empty ressource leaf) : seems to be less efficient
+            // cut branches ending with an empty resource
             /*List<Integer> toBeRemoved = new ArrayList<>();
             tree.stream().filter(idx -> {
                 GraphNode node = nodes.get(idx);
@@ -90,62 +89,42 @@ class Player {
             updateResourceCount();*/
         }
 
-        /*void bestTree(int depth) {
-            Queue<Integer> shortest = null;
-            if(depth>0) {
-                for(int from: tree) {
-                    for (int to : resources) {
-                        if(cells[to].currentResource>0 && !tree.contains(to)) { // don't target empty resources and resources already visited by the tree
-                            Queue<Integer> path = shortestPathTo(from, to);
-                            if(path != null && (shortest == null || path.size() < shortest.size())) {
-                                if(Stream.concat(tree.stream(), path.stream()).distinct().count() <= myAnts/(myBases.size()/2.0d)) { // don't bother to go too far 
-                                    shortest = path;
-                                }
-                            }
-                        }
-                    }
-                }
-                if(shortest!=null && shortest.size()>1) {
-                    //System.err.println("shortest="+shortest);
-                    addSegment(new ArrayList<>(shortest));
-                    bestTree(depth-1);
-                }
-            }
-        }*/
-
-        // maximize ressource in shorter path (= myAnts)
+        /*  find a new branch from all current tree position which maximize resources in shorter path */
         void bestTree(double score) {
-            System.err.println("bestTree score="+score+" tree.size="+tree.size()+" tree="+tree);
-            Deque<Integer> best = null;
-            double bestScore = 0d;
+            //System.err.println("bestTree score="+score+" tree.size="+tree.size()+" tree="+tree);
+            Deque<Integer> newBranch = null;
+            double newBranchScore = 0d;
             for(int from: tree) {
                 for (int to : resources) {
+                    // loop : calculate shorter path from each current tree position to all resources
                     if(cells[to].currentResource>0 && !tree.contains(to)) { // don't target empty resources and resources already visited by the tree
+
                         Deque<Integer> path = shortestPathTo(from, to);
                         //System.err.println("from="+from+" to="+to+" path.size()="+path.size()+" path="+path);
                         if(path != null && tree.size()+path.size()-1 <= myAnts/myBases.size()/(2.0d*myAnts/oppAnts)) {
                             double scoreCandidate = evaluateSegment(path);
-                            //System.err.println(" score="+score+" bestScore="+bestScore+" pathScore="+scoreCandidate);
-                            if(scoreCandidate > bestScore) {
+                            //System.err.println(" score="+score+" newBranchScore="+newBranchScore+" pathScore="+scoreCandidate);
+                            if(scoreCandidate > newBranchScore) {
                                 //System.err.println(" =======> BETTER");
-                                bestScore = scoreCandidate;
-                                best = path;
+                                newBranchScore = scoreCandidate;
+                                newBranch = path;
                             }
                         }
                     }
                 }
             }
-            if(best!=null && best.size()>1) {
+            // if a new branch was found, add it to the graph, and find a new one
+            if(newBranch!=null && newBranch.size()>1) {
                 //System.err.println("shortest="+shortest);
-                addSegment(new ArrayList<>(best));
-                bestTree(bestScore);
+                addSegment(new ArrayList<>(newBranch));
+                bestTree(newBranchScore);
             }
-            System.err.println("");
+            //System.err.println("");
         }
 
-        double evaluateSegment(Collection<Integer> segmentCandidate) { 
-            //System.err.println("  evaluateSegment "+segmentCandidate);
-            return Double.valueOf((Stream.concat(tree.stream(), segmentCandidate.stream()).filter(i -> cells[i].currentResource>0).count()))/Double.valueOf(segmentCandidate.size());
+        // a segment score
+        double evaluateSegment(Collection<Integer> segmentCandidate) {
+            return Double.valueOf(Stream.concat(tree.stream(), segmentCandidate.stream()).filter(i -> cells[i].currentResource>0).distinct().count())/Double.valueOf(Stream.concat(tree.stream(), segmentCandidate.stream()).distinct().count());
         }
 
         void addSegment(List<Integer> segment) {
@@ -161,7 +140,6 @@ class Player {
                 node.segment = segment;
                 //System.err.println("  addSegment to "+nodeIdx+" : "+node.distanceToBase);
             });
-            segmentsCount++;
             updateResourceCount();
         }
 
@@ -171,12 +149,12 @@ class Player {
 
     }
 
+    /** Represents a node in the tree graph */
     static class GraphNode {
-		List<Integer> segment;
-        int distanceToBase = 0;
-        int idx;
-
-		final List<List<Integer>> childSegments = new ArrayList<>();
+        int idx;                // cell's idx
+        List<Integer> segment;  // segment of the tree to which this node belongs (an array of cell's idx)
+        int distanceToBase = 0; // node's count to base
+        final List<List<Integer>> childSegments = new ArrayList<>();    // array of child segments if this node is a bifurcation in the tree
 
         boolean isLeaf() {
             return segment.size()>0 && idx==segment.get(segment.size()-1) && childSegments.isEmpty();
@@ -220,6 +198,7 @@ class Player {
         }
     }
 
+    /** calcaulate Cartesian's (x,y) coordinates of each cell of the board */
     static void computePosition(int i) {
         Cell c = cells[i];
         for (int j = 0; j < 6; j++) {
@@ -235,31 +214,32 @@ class Player {
         }
     }
 
-    static Deque<Integer> populateCache(int from, int to, AstarNode[] done) {
+    /** Populate cache whith all intermediate path from 'from' to 'to' */
+    static Deque<Integer> populateCache(int from, int to, AstarNode[] path) {
         int i = to;
         Deque<Integer> result = new ArrayDeque<>();
-        // populate the cache
         while(i!=from) {
             result.push(i);
             if(i!=to) {
-                cache.get(to).put(i, result.toArray(new Integer[0]));
+                shortestPathCache.get(to).put(i, result.toArray(new Integer[0]));
             }
-            i = done[i].by; 
+            i = path[i].by;
         }
         result.push(from);
-        cache.get(to).put(from, result.toArray(new Integer[0]));
+        shortestPathCache.get(to).put(from, result.toArray(new Integer[0]));
         return result;
     }
 
+    /** Astar implementation of shortestPath */
     static Deque<Integer> shortestPathTo(int from, int to) {
-        Integer[] cachedResult = cache.get(to).get(from);
+        Integer[] cachedResult = shortestPathCache.get(to).get(from);
         Deque<Integer> result = new ArrayDeque<>();
         if(cachedResult!=null) {
             Collections.addAll(result, cachedResult);
             //System.err.println("from="+from+" to="+to+" => CACHED "+result);
             return result;
         }
-        
+
         AstarNode[] done = new AstarNode[numberOfCells];
         PriorityQueue<AstarNode> stack = new PriorityQueue<>();
         AstarNode startNode = new AstarNode();
@@ -273,7 +253,7 @@ class Player {
             AstarNode first = stack.poll();
             done[first.idx] = first;
 
-            // found a ressource, so populate the cache
+            // found a resource, so populate the cache
             if(resources.contains(first.idx)) {
                 populateCache(from, first.idx, done);
             }
@@ -300,14 +280,13 @@ class Player {
 
     public static void main(String[] args) {
         Scanner in = new Scanner(System.in);
-        numberOfCells = in.nextInt(); // amount of hexagonal cells in this map
+        numberOfCells = in.nextInt();
+
+        // build
         cells = new Cell[numberOfCells];
         for (int i = 0; i < numberOfCells; i++) {
             int type = in.nextInt(); // 0 for empty, 1 for eggs, 2 for crystal
-            if(type==1) {
-                eggs.add(i);
-            }
-            if(type==2) {
+            if(type>0) {
                 resources.add(i);
             }
             Cell cell = new Cell();
@@ -319,7 +298,6 @@ class Player {
             }
             cells[i] = cell;
         }
-        resources.addAll(eggs);
         cells[0].x = 0;
         cells[0].y = 0;
         computePosition(0);
@@ -333,29 +311,26 @@ class Player {
             oppBaseIndex.add(in.nextInt());
         }
 
-        cache = new HashMap<>();
+        shortestPathCache = new HashMap<>();
         for (int i : resources) {
-            cache.put(i, new HashMap<>());
+            shortestPathCache.put(i, new HashMap<>());
         }
 
-        // precompute shortest distance cache from each base to each ressources
+        // precompute shortest distance cache from each base to each resources
         long before = System.currentTimeMillis();
         for (Graph base : myBases) {
             for (int to : resources) {
-                if(cache.get(to).get(base.rootIdx) == null) {
+                if(shortestPathCache.get(to).get(base.rootIdx) == null) {
                     shortestPathTo(base.rootIdx, to);
                 }
-                //System.err.println("from="+from+" to="+to+" dist="+cache.get(to).get(from).length);
             }
         }
         long now = System.currentTimeMillis();
         System.err.println("precompute cache nbCells="+numberOfCells+" nbRes="+resources.size()+" nbBase="+myBases.size()+": "+(now-before)+"ms");
 
-
+        Set<Integer> beacons = new HashSet<>(); // holds a list of cells where to put beacons (recalculated every turn)
         // game loop
         while (true) {
-            myAnts=0;
-            oppAnts=0;
             for (int i = 0; i < numberOfCells; i++) {
                 cells[i].currentResource = in.nextInt(); // the current amount of eggs/crystals on this cell
                 cells[i].myAnts = in.nextInt(); // the amount of your ants on this cell
@@ -364,6 +339,7 @@ class Player {
                 oppAnts+=cells[i].oppAnts;
             }
 
+            // WAIT | LINE <sourceIdx> <targetIdx> <strength> | BEACON <cellIdx> <strength> | MESSAGE <text>
             beacons.clear();
             for (Graph graph : myBases) {
                 graph.updateTree();
@@ -375,14 +351,10 @@ class Player {
             }
             System.out.println(cmd);
 
-
-
             // Write an action using System.out.println()
             // To debug: System.err.println("Debug messages...");
 
-
-            // WAIT | LINE <sourceIdx> <targetIdx> <strength> | BEACON <cellIdx> <strength> | MESSAGE <text>
-            //System.out.println("WAIT");
         }
     }
 }
+
