@@ -2,9 +2,26 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * ALGORITHM to build the chain :
+ * - initialize the chain with our bases
+ * - recursion :
+ *      - from each node of the chain, to each resource left : find the shortest path (exclude paths if chain.size+path.size > ants)
+ *      - evaluate current chain + branchCandidate (maximize resource density, ...) => here is the startegy
+ *      - if adding branchCandidate is better for the chain, add it and call recursively
+ *  - recursion stop conditions :
+ *      - limited to depth=10
+ *      - there is no new branch which maximize the score of the chain
+ *
+ *   - increase weight of beacons where oppAnts>myAnts
+ *   - recalculate the chain, only if one of the harvested resource is empty
+ *
+ *
+ *   Shortest paths are calculated with Astar, with cartesian distance as heuristics
+ *   For optimization, a cache of all paths is kept, once calculated once
+ *
+ */
 class Player {
-
-    static long chronoTop = 0L;
 
     final static double PI3rd = Math.PI/3;
 
@@ -71,20 +88,9 @@ class Player {
             double diff = weight()-((AstarNode) o).weight();
             return (diff < 0)?-1:(diff>0)?1:0;
         }
-
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            AstarNode astarNord = (AstarNode) o;
-            return idx == astarNord.idx && by == astarNord.by && Double.compare(astarNord.distanceToEnd, distanceToEnd) == 0 && Double.compare(astarNord.weightFromStart, weightFromStart) == 0;
-        }
-
-        public int hashCode() {
-            return Objects.hash(idx, by, distanceToEnd, weightFromStart);
-        }
     }
 
-    /** calcaulate Cartesian's (x,y) coordinates of each cell of the board */
+    /** calculate Cartesian's (x,y) coordinates of each cell of the board (needed for Astar) */
     static void computePosition(int i) {
         Cell c = cells[i];
         for (int j = 0; j < 6; j++) {
@@ -122,7 +128,6 @@ class Player {
         Deque<Integer> result = new ArrayDeque<>();
         if(cachedResult!=null) {
             Collections.addAll(result, cachedResult);
-            //System.err.println("from="+from+" to="+to+" => CACHED "+result);
             return result;
         }
 
@@ -160,7 +165,6 @@ class Player {
         }
         done[stack.peek().idx] = stack.peek();
         result = populateCache(from, to, done);
-        //System.err.println("from="+from+" to="+to+" => "+result);
         return result;
     }
 
@@ -195,14 +199,11 @@ class Player {
 
         // called on each turn to update the tree
         void updateChain() {
-            System.err.println(System.currentTimeMillis()-chronoTop+" updateChain()");
             // clear the chain only if one of the harvested resources became empty
             if(harvestingResources.size() ==0 || chain.stream().filter(i-> cells[i].type>0 && cells[i].currentResource>0).count() != harvestingResources.size()) {
-                System.err.println(System.currentTimeMillis()-chronoTop+" updateChain() : need refresh");
                 chain.clear();
                 bases.stream().forEach(i -> chain.add(i));
                 addBranch(0d, 10);
-                System.err.println(System.currentTimeMillis()-chronoTop+" finish add branch");
                 harvestingResources.clear();
                 chain.stream().filter(i-> cells[i].type>0 && cells[i].currentResource>0).forEach(i -> harvestingResources.add(i));
             }
@@ -211,23 +212,17 @@ class Player {
         /*  find a new branch from all current tree position which maximize resources in shorter path */
         void addBranch(double score, int iteration) {
             if(iteration==0) return;
-            //System.err.println("bestTree score="+score+" tree.size="+tree.size()+" tree="+tree);
             Deque<Integer> newBranch = null;
-            double newBranchScore = 0d;
             for(int from: chain) {
                 for (int to: resources) {
                     // loop : calculate shorter path from each current tree position to all resources
-                    //System.err.println("res : "+to+" "+cells[to].currentResource);
                     if(cells[to].currentResource>0 && !chain.contains(to)) { // don't target empty resources and resources already visited by the tree
                         double maxTreeSize = ants;
                         Deque<Integer> pathCandidate = shortestPathTo(from, to);
-                        //System.err.println("from="+from+" to="+to+" path.size()="+path.size()+" path="+path);
                         if(pathCandidate != null && Double.valueOf(chain.size()+pathCandidate.size()-1) <= maxTreeSize) {
                             double scoreCandidate = evaluateSegment(pathCandidate);
-                            //System.err.println(" score="+score+" newBranchScore="+newBranchScore+" pathScore="+scoreCandidate);
-                            if(scoreCandidate > newBranchScore) {
-                                //System.err.println(" =======> BETTER");
-                                newBranchScore = scoreCandidate;
+                            if(scoreCandidate > score) {
+                                score = scoreCandidate;
                                 newBranch = pathCandidate;
                             }
                         }
@@ -236,36 +231,33 @@ class Player {
             }
             // if a new branch was found, add it to the graph, and find a new one
             if(newBranch!=null && newBranch.size()>1) {
-                //System.err.println("shortest="+shortest);
-                System.err.println(System.currentTimeMillis()-chronoTop+" add branch");
                 addSegment(new ArrayList<>(newBranch));
-                addBranch(newBranchScore, iteration-1);
+                addBranch(score, iteration-1);
             }
         }
 
-        // a segment score
+        /**
+         * evaluate current chain + segementCandidate
+         * maximize resource density
+         * */
         double evaluateSegment(Collection<Integer> segmentCandidate) {
             List<Integer> resourcesLeft = resources.stream().filter(i -> cells[i].type==2 && cells[i].currentResource>0).collect(Collectors.toList());
             if(resourcesLeft.size()==1 && !isReachable(resourcesLeft.get(0)) && !segmentCandidate.contains(resourcesLeft.get(0))) return 0; // if there is only 1 reachable resource, we should rush for it
             final double[] score = { 0d, 0d}; // an "effective static" wrapper to be used in lambda score[0]:"sum of cell's score" score[1]:"sum of cells"
             double count = Double.valueOf(Stream.concat(chain.stream(), segmentCandidate.stream()).distinct().count());
-            score[1] = Math.pow(count,3);
+            score[1] = Math.pow(count,3); // prioritize denser path in cubic law
             Stream.concat(chain.stream(), segmentCandidate.stream()).filter(i -> cells[i].currentResource>0).distinct().forEach(i->{
+                // IDEAs :
+                // - prioritize resources closer to center of the map
+                // - prioritize chain having already ants on the path (moving ants is expensive)
+                // - prioritize eggs at the beginning of the game if closer to the base
                 if(cells[i].type == 1) {
                     // it's an EGG
-                    if(ants<=opp.ants*1.2)  {
-                        score[0]+=2;
-                    } else if (ants<=opp.ants*1.2){
-                        score[0]++;
-                    } else {
-                        score[1]*=2; // penalize as empty cells
-                    }
+                    score[0]++;
                 } else if (cells[i].type == 2) {
                     // it's a crystal
                     score[0]++;
-                    score[0]+= cells[i].currentResource / crystalsLeft; // prioritize most valueable resource
-                } else {
-                    score[1]*=2; // penalize empty cells
+                    score[0]+= (double)cells[i].currentResource / (double)crystalsLeft; // prioritize most valueable resource
                 }
             });
             return score[0]/score[1];
@@ -280,7 +272,6 @@ class Player {
         }
 
         void addSegment(List<Integer> segment) {
-            //System.err.println("addSegment="+segment);
             chain.addAll(segment);
         }
 
@@ -337,13 +328,11 @@ class Player {
             opp.bases.add(in.nextInt());
         }
 
+        // precompute shortest distance cache from each base to each resources
         shortestPathCache = new HashMap<>();
         for (int i : resources) {
             shortestPathCache.put(i, new HashMap<>());
         }
-
-        // precompute shortest distance cache from each base to each resources
-        chronoTop = System.currentTimeMillis();
         for (int from : strategy.bases) {
             for (int to : resources) {
                 if(shortestPathCache.get(to).get(from) == null) {
@@ -351,8 +340,6 @@ class Player {
                 }
             }
         }
-        long now = System.currentTimeMillis();
-        System.err.println("precompute cache nbCells="+numberOfCells+" nbRes="+resources.size()+" nbBase="+ strategy.bases.size()+": "+(now-chronoTop)+"ms");
 
         Set<Integer> beacons = new HashSet<>(); // holds a list of cells where to put beacons (recalculated every turn)
         // game loop
@@ -362,7 +349,6 @@ class Player {
 
             strategy.resetCounters();
             opp.resetCounters();
-            System.err.println(System.currentTimeMillis()-chronoTop+" RESET COUNTERS DONE");
             for (int i = 0; i < numberOfCells; i++) {
                 cells[i].currentResource = in.nextInt(); // the current amount of eggs/crystals on this cell
                 cells[i].myAnts = in.nextInt(); // the amount of your ants on this cell
@@ -376,10 +362,6 @@ class Player {
                     strategy.crystalsLeft +=cells[i].currentResource;
                 }
             }
-            chronoTop = System.currentTimeMillis();
-            System.err.println(System.currentTimeMillis()-chronoTop+" START");
-
-            //System.err.println("my.ants="+strategy.ants+" my.occupied="+strategy.occupied.size()+" opp.ant="+opp.ants+" opp.occupied="+opp.occupied.size()+" eggs="+ strategy.eggsLeft +" crystals="+ strategy.crystalsLeft);
 
             // WAIT | LINE <sourceIdx> <targetIdx> <strength> | BEACON <cellIdx> <strength> | MESSAGE <text>
             beacons.clear();
@@ -390,9 +372,7 @@ class Player {
                 int weight = strategy.getBeaconWeight(cellIdx);
                 cmd+="BEACON "+cellIdx+" "+weight+";";
             }
-            System.err.println(System.currentTimeMillis()-chronoTop+" WRITING BEACON");
             System.out.println(cmd);
-            System.err.println(System.currentTimeMillis()-chronoTop+" FINISHED loop");
 
             // Write an action using System.out.println()
             // To debug: System.err.println("Debug messages...");
